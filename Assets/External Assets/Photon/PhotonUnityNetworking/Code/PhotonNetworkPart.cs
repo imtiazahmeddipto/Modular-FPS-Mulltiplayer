@@ -299,6 +299,10 @@ namespace Photon.Pun
                 {
                     if (view.isRuntimeInstantiated)
                     {
+                        Transform root = view.gameObject.transform.root;
+                        if (root.CompareTag("Player"))
+                            continue;
+
                         instantiatedGos.Add(view.gameObject); // HashSet keeps each object only once
                     }
                     // For non-instantiated objects (scene objects) - reset the view
@@ -319,6 +323,7 @@ namespace Photon.Pun
             PhotonNetwork.lastUsedViewSubId = 0;
             PhotonNetwork.lastUsedViewSubIdStatic = 0;
         }
+
 
 
         /// <summary>

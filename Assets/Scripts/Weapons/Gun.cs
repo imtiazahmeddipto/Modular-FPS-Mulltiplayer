@@ -1,9 +1,8 @@
-﻿//Simple and easy weapon shooting implementation
-
-using System;
+﻿using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
-//using EZCameraShake;
+using EZCameraShake;
 using Photon.Pun;
 using TMPro;
 
@@ -13,13 +12,12 @@ public class Gun : Weapons
     [SerializeField] private Transform scopedTransform;
     [SerializeField] private Transform normalTransform;
     [Space]
-    [SerializeField] private Transform shootPoint;
-    [Space]
     [SerializeField] private Camera cam;
     [Space]
     [SerializeField] private GameObject crossHair;
+    [SerializeField] private ParticleSystem muzzleFlashPrefab;
     [SerializeField] private Animator animator;
-    [Space] 
+    [Space]
     [SerializeField] private TMP_Text ammoText;
     [Space]
     [SerializeField] private PhotonView pv;
@@ -44,9 +42,9 @@ public class Gun : Weapons
     public float fireRate = 15f;
     [HideInInspector] public float nextTimeToFire = 0f;
 
-    /*[Header("Camera Shake")]
+    [Header("Camera Shake")]
     [SerializeField] private float intensity = 0.6f;
-    [SerializeField] private float roughness = 0.8f;*/
+    [SerializeField] private float roughness = 0.8f;
 
     [Header("KeyCodes")]
     [SerializeField] private KeyCode shootKey = KeyCode.Mouse0;
@@ -57,7 +55,7 @@ public class Gun : Weapons
     [SerializeField] private PlayerMovement playerMovement;
     [SerializeField] private WeaponSway sway;
 
-    [Header("Debug")] 
+    [Header("Debug")]
     public bool isScoped;
     public bool isShooting;
     public bool isReloading;
@@ -65,13 +63,39 @@ public class Gun : Weapons
     private bool shootNonAuto;
     private bool shootAuto;
     private bool reload;
-
+    public CameraShaker cameraShaker;
     private RaycastHit hit;
+    [SerializeField] private AudioSource audioSource;
+    public AudioClip shootSound;
+    public GameObject HitParticle;
+    [SerializeField] private GameObject hitMarkerUI;
+    private Coroutine hitMarkerCoroutine;
+    [Header("Equip Animation")]
+    public bool isEquipping;
 
     private void Start()
     {
         amountLeft = magSize;
+        if (pv.IsMine)
+        {
+            cameraShaker.enabled = true;
+        }
     }
+    private void OnEnable()
+    {
+        if (pv.IsMine)
+        {
+         StartCoroutine(EquipRoutine());
+        }
+    }
+    private IEnumerator EquipRoutine()
+    {
+        isEquipping = true;
+        animator.SetTrigger("Equip");
+        yield return new WaitForSeconds(0.3f);
+        isEquipping = false;
+    }
+
 
     private void Update()
     {
@@ -79,8 +103,8 @@ public class Gun : Weapons
         {
             shootNonAuto = Input.GetKeyDown(shootKey);
             shootAuto = Input.GetKey(shootKey);
-            reload = Input.GetKeyDown(reloadKey);
-        
+            reload = playerMovement.ReloadButton;
+            playerMovement.canSwitchGuns = !(isEquipping || isReloading || isShooting);
             if (isReloading || isShooting)
             {
                 playerMovement.canSwitchGuns = false;
@@ -89,7 +113,7 @@ public class Gun : Weapons
             {
                 playerMovement.canSwitchGuns = true;
             }
-        
+
             HandleScoping();
 
             if (automatic)
@@ -103,7 +127,7 @@ public class Gun : Weapons
                     isShooting = false;
                 }
             }
-            
+
 
             if (isScoped && !isReloading)
             {
@@ -123,10 +147,10 @@ public class Gun : Weapons
                 Reload();
             }
 
-            SetAmmoText();   
+            SetAmmoText();
         }
     }
-    
+
     public override void Use()
     {
         //Debug.Log("Using gun: " + itemInfo.itemName);
@@ -145,17 +169,63 @@ public class Gun : Weapons
 
     private void Shoot()
     {
-        if (Physics.Raycast(shootPoint.position, cam.transform.forward, out hit, 500f))
+        Ray ray = cam.ScreenPointToRay(new Vector2(Screen.width / 2, Screen.height / 2));
+        if (Physics.Raycast(ray, out hit, 500f))
         {
-            if(isReloading) return;
-            
+            if (isReloading) return;
+
+            // Check if the hit object is an enemy player
+            PhotonView targetPV = hit.collider.GetComponent<PhotonView>();
+            if (targetPV != null && !targetPV.IsMine)
+            {
+                // Show the hit marker
+                ShowHitMarker();
+            }
+
+            // Apply damage if the object is damageable
             hit.collider.gameObject.GetComponent<IDamageable>()?.TakeDamage(((GunInfo)itemInfo).damage);
-            pv.RPC("Shoot_RPC", RpcTarget.All, hit.point, hit.normal);
+
+            // Instantiate hit effects (if needed)
+            if (!hit.transform.CompareTag("Player"))
+            {
+                pv.RPC("Shoot_RPC", RpcTarget.All, hit.point, hit.normal);
+            }
         }
 
         amountLeft--;
-        //camShaker.ShakeOnce(intensity, roughness, 0.1f, 0.1f);
+        pv.RPC("PlayMuzzleFlash", RpcTarget.All);
+
+        cameraShaker.ShakeOnce(intensity, roughness, 0.3f, 0.3f);
     }
+
+    private void ShowHitMarker()
+    {
+        if (hitMarkerUI != null)
+        {
+            // Reset the hit marker timer on every hit
+            if (hitMarkerCoroutine != null)
+            {
+                StopCoroutine(hitMarkerCoroutine); // Stop the existing coroutine
+            }
+            hitMarkerUI.SetActive(true); // Ensure it's visible
+            hitMarkerCoroutine = StartCoroutine(HideHitMarker()); // Start a new coroutine
+        }
+    }
+
+    private IEnumerator HideHitMarker()
+    {
+        yield return new WaitForSeconds(0.15f); // Wait 0.15s AFTER THE LAST HIT
+        hitMarkerUI.SetActive(false);
+        hitMarkerCoroutine = null; // Reset the coroutine reference
+    }
+
+    [PunRPC]
+    private void PlayMuzzleFlash()
+    {
+        muzzleFlashPrefab.Play();
+        audioSource.PlayOneShot(shootSound);
+    }
+
 
     private void Reload()
     {
@@ -177,47 +247,56 @@ public class Gun : Weapons
         }
     }
 
+    private bool canToggleScope = true; // Prevents multiple toggles per press
+
     private void HandleScoping()
     {
         if (pv.IsMine)
         {
-            isScoped = Input.GetKey(scopeKey);
+            // Check if the button is pressed and it's allowed to toggle
+            if (playerMovement.ScopeButton && canToggleScope)
+            {
+                isScoped = !isScoped; // Toggle scope state
+                canToggleScope = false; // Prevents multiple toggles until button is released
+            }
+
+            // Reset toggle ability when the button is released
+            if (!playerMovement.ScopeButton)
+            {
+                canToggleScope = true;
+            }
 
             if (isScoped && !isReloading)
             {
+                // Move camera to scoped position
                 gameObject.transform.position = Vector3.Lerp(gameObject.transform.position, scopedTransform.position, Time.deltaTime * 12f);
                 cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, scopedFOV, Time.deltaTime * lerpTime);
-            
-                //crossHair.SetActive(false);
+
+                // Fade out crosshair
                 Image img = crossHair.GetComponent<Image>();
                 img.color = new Color(img.color.r, img.color.g, img.color.b, Mathf.Lerp(img.color.a, 0f, Time.deltaTime * lerpTime));
             }
-            else if (!isScoped && !isReloading)
+            else
             {
+                // Move camera to normal position
                 gameObject.transform.position = Vector3.Lerp(gameObject.transform.position, normalTransform.position, Time.deltaTime * 12f);
                 cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, normalFOV, Time.deltaTime * lerpTime);
-            
-                //crossHair.SetActive(true);
+
+                // Fade in crosshair
                 Image img = crossHair.GetComponent<Image>();
                 img.color = new Color(img.color.r, img.color.g, img.color.b, Mathf.Lerp(img.color.a, 1f, Time.deltaTime * lerpTime));
             }
-            else if (isScoped && isReloading)
-            {
-                gameObject.transform.position = Vector3.Lerp(gameObject.transform.position, normalTransform.position, Time.deltaTime * 12f);
-                cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, normalFOV, Time.deltaTime * lerpTime);
-            
-                //crossHair.SetActive(true);
-                Image img = crossHair.GetComponent<Image>();
-                img.color = new Color(img.color.r, img.color.g, img.color.b, Mathf.Lerp(img.color.a, 1f, Time.deltaTime * lerpTime));
-            }   
         }
     }
+
+
+
 
     public void StartShootingAnimationAuto()
     {
         if (pv.IsMine)
         {
-            animator.SetBool("isShooting", true);
+            animator.SetTrigger("isShooting");
         }
     }
 
@@ -225,8 +304,8 @@ public class Gun : Weapons
     {
         if (pv.IsMine)
         {
-            animator.SetBool("isShooting", false);
-            animator.gameObject.transform.position = new Vector3(animator.gameObject.transform.position.x, animator.gameObject.transform.position.y, normalTransform.position.z);   
+            //animator.SetBool("isShooting", false);
+            animator.gameObject.transform.position = new Vector3(animator.gameObject.transform.position.x, animator.gameObject.transform.position.y, normalTransform.position.z);
         }
     }
 
@@ -234,16 +313,16 @@ public class Gun : Weapons
     {
         if (pv.IsMine)
         {
-            animator.SetBool("isShooting", true);
+            animator.SetTrigger("isShooting");
         }
-       
+
     }
 
     public void StopShootingAnimationNonAuto()
     {
         if (pv.IsMine)
         {
-            animator.SetBool("isShooting", false);
+            //animator.SetBool("isShooting", false);
             //animator.gameObject.transform.position = new Vector3(animator.gameObject.transform.position.x, animator.gameObject.transform.position.y, normalTransform.position.z);   
         }
     }
@@ -277,10 +356,14 @@ public class Gun : Weapons
             Collider[] colliders = Physics.OverlapSphere(hitPosition, 0.3f);
             if (colliders.Length != 0)
             {
-                GameObject bulletImpact =  Instantiate(bulletImpactPrefab, hitPosition + hitNormal * 0.001f, Quaternion.LookRotation(hitNormal, Vector3.up) * bulletImpactPrefab.transform.rotation);
-                Destroy(bulletImpact, 2.5f);
-                bulletImpact.transform.SetParent(colliders[0].transform);
+                GameObject bulletImpact = PhotonNetwork.Instantiate(bulletImpactPrefab.name, hitPosition + hitNormal * 0.001f, Quaternion.LookRotation(hitNormal, Vector3.up) * bulletImpactPrefab.transform.rotation);
             }
+        }
+
+        if (!hit.transform.CompareTag("OtherPlayer"))
+        {
+            GameObject hitParticleInstance = PhotonNetwork.Instantiate(HitParticle.name, hitPosition + hitNormal * 0.001f, Quaternion.LookRotation(hitNormal));
+            Destroy(hitParticleInstance, .3f); // Destroy the hit particle after 2 seconds
         }
     }
 }

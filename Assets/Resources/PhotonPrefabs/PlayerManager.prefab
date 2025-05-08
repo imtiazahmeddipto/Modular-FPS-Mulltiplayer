@@ -67,3 +67,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   controller: {fileID: 0}
+  killIndicator: {fileID: 0}
+  characters:
+  - characterName: BongoBoltu
+    prefabPath: Character_5
+  - characterName: Modi
+    prefabPath: Character_1
+  - characterName: Yousuf
+    prefabPath: Character_4
+  - characterName: Putin
+    prefabPath: Character_3
+  - characterName: Trump
+    prefabPath: Character_1
